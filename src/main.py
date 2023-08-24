@@ -5,7 +5,7 @@ from viam.module.module import Module
 from viam.components.sensor import Sensor
 from viam.resource.registry import Registry, ResourceCreatorRegistration
 
-from wifi_sensor import MySensor 
+from memory_sensor import MySensor 
 
 
 async def main():

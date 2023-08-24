@@ -18,16 +18,22 @@ logger = getLogger(__name__)
 
 class MySensor(Sensor):
     # Subclass the Viam Sensor component and implement the required functions
-    MODEL: ClassVar[Model] = Model(ModelFamily("acme","memory_sensor"), "RaspPi")
+    MODEL: ClassVar[Model] = Model(ModelFamily("acme","memory_sensor"), "rasppi")
     auth_token = None
     account_sid = None
     recipient_phone = None
     deliverer_phone = None
-    threshold = 1
+    threshold = None
     
     @classmethod
     def new(cls, config: ComponentConfig, dependencies: Mapping[ResourceName, ResourceBase]) -> Self:
         sensor = cls(config.name)
+        sensor.auth_token = None
+        sensor.account_sid = None
+        sensor.recipient_phone = None
+        sensor.deliverer_phone = None
+        sensor.threshold = 1
+        sensor.reconfigure(config, dependencies)
         return sensor
 
     @classmethod
@@ -51,7 +57,7 @@ class MySensor(Sensor):
         threshold = config.attributes.fields['threshold'].string_value
         if threshold == '':
             logger.warning('no alert threshold')
-
+        logger.info("Config Validated")
         return []
 
     def reconfigure(self, config: ComponentConfig, dependencies: Mapping[ResourceName, ResourceBase]):
@@ -60,6 +66,7 @@ class MySensor(Sensor):
         self.recipient_phone = config.attributes.fields['recipient_phone'].string_value
         self.deliverer_phone = config.attributes.fields['deliverer_phone'].string_value
         self.threshold =  config.attributes.fields['threshold'].string_value
+        logger.info("reconfigured")
 
     async def get_readings(self, extra: Optional[Dict[str, Any]] = None, **kwargs) -> Mapping[str, Any]:
         with open("/proc/meminfo") as memory_info:
@@ -71,22 +78,25 @@ class MySensor(Sensor):
             line = line.replace("\n", "").split(":")
             memory_dict[line[0]] = line[1].replace("kB", "").strip()
         memory_allocation = float(memory_dict["MemFree"]) / float(memory_dict["MemAvailable"])
+        
+        sensor_reading = {"memory_allocation": memory_allocation}
+        
+        self.call_twilio(sensor_reading)
 
-        self.call_twilio(memory_allocation)
-
-        return memory_allocation
+        return sensor_reading
     
     def call_twilio(self, sensor_reading):
-        if self.auth_token == '' or self.account_sid == '' or self.recipient_phone == '' or self.deliverer_phone == '' or self.threshold == '':
-            if sensor_reading > self.threshold:
+        if self.auth_token == None or self.account_sid == None or self.recipient_phone == None or self.deliverer_phone == None or self.threshold == None:
+            logger.warn("Missing Twilio Attributes...")
+        else:
+            if sensor_reading["memory_allocation"] > float(self.threshold):
                 client = Client(self.account_sid, self.auth_token)
                 message = client.messages.create(
-                    from_= self.deliverer_phone,
+                    from_= self.deliverer_phone,S
                     to = self.recipient_phone,
                     body = str(self.name) + " over alert threshold."
                 )
-        else:
-            logger.warn("Missing Twilio Attributes...")
+        pass
 
 
 # Anything below this line is optional, but may come in handy for debugging and testing.
