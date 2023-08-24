@@ -92,7 +92,7 @@ class MySensor(Sensor):
             if sensor_reading["memory_allocation"] > float(self.threshold):
                 client = Client(self.account_sid, self.auth_token)
                 message = client.messages.create(
-                    from_= self.deliverer_phone,S
+                    from_= self.deliverer_phone,
                     to = self.recipient_phone,
                     body = str(self.name) + " over alert threshold."
                 )
