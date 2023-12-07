@@ -100,7 +100,7 @@ class MySensor(Sensor):
     async def get_readings(self, extra: Optional[Dict[str, Any]] = None, **kwargs) -> Mapping[str, Any]:
         await self.check_kasa_plug()
         if 'fromDataManagement' in extra and extra['fromDataManagement'] is True:
-            sensor_reading = {'value': 'NOT READY'}
+            raise NoCaptureToStoreError()
         else:
             sensor_reading = await self.discover_kasa_devices()
         return sensor_reading
