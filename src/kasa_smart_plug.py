@@ -2,6 +2,9 @@
 import asyncio
 
 import os
+import json
+from google.protobuf import json_format
+
 from kasa import SmartPlug
 from kasa import Discover
 
@@ -36,7 +39,7 @@ logger = getLogger(__name__)
 
 class MySensor(Sensor):
     # Subclass the Viam Sensor component and implement the required functions
-    MODEL: ClassVar[Model] = Model(ModelFamily("acme","memory_sensor"), "rasppi")
+    MODEL: ClassVar[Model] = Model(ModelFamily("bill","kasaplug"), "visionswitch")
     source_camera = None
     tags = None
     vision_service = None
@@ -72,7 +75,7 @@ class MySensor(Sensor):
         
     def reconfigure(self, config: ComponentConfig, dependencies: Mapping[ResourceName, ResourceBase]):
         """Handles attribute reconfiguration"""
-        actual_cam_name = config.attributes.fields["actual_cam"].string_value
+        actual_cam_name = config.attributes.fields["source_camera"].string_value
         actual_cam = dependencies[Camera.get_resource_name(actual_cam_name)]
         self.source_camera = cast(Camera, actual_cam)
 
@@ -80,7 +83,9 @@ class MySensor(Sensor):
         vision_service = dependencies[Vision.get_resource_name(vision_service_name)]
         self.vision_service = cast(Vision, vision_service)
 
-        tags = config.attributes.fields["tags"].string_value
+        tags = config.attributes.fields["tags"]
+        tags = json.loads(json_format.MessageToJson(config.attributes.fields["tags"]))
+
         self.tags = tags
 
         plug_ip = config.attributes.fields["plug_ip"].string_value
@@ -92,45 +97,57 @@ class MySensor(Sensor):
         else:
             self.default_state = "on"
 
-        logger.info("reconfigured")
-
     async def get_readings(self, extra: Optional[Dict[str, Any]] = None, **kwargs) -> Mapping[str, Any]:
         await self.check_kasa_plug()
-        sensor_reading = await self.call_kasa()
+        if 'fromDataManagement' in extra and extra['fromDataManagement'] is True:
+            sensor_reading = {'value': 'NOT READY'}
+        else:
+            sensor_reading = await self.discover_kasa_devices()
         return sensor_reading
     
     async def check_kasa_plug(self):
         found = False
         detections = await self.vision_service.get_detections_from_camera("webcam")
         for d in detections:
-            if d.confidence >= self.tags.get(d) and self.tags.get(d) != None:
+            tag_value = self.tags.get(d.class_name)
+            if tag_value is not None and d.confidence >= tag_value:
                 print("I see a " + str(d.class_name))
                 found = True
                 break
 
         if found == True:
             if self.default_state == "on":
-                self.plug.turn_off()
+                await self.plug.turn_off()
             else:
-                self.plug.turn_on()
+                await self.plug.turn_on()
         else:
             if self.default_state == "on":
-                self.plug.turn_on()
+                await self.plug.turn_on()
             else:
-                self.plug.turn_off()
+                await self.plug.turn_off()
         pass
 
-    async def call_kasa(self):
-        found_devices = await Discover.discover()
-        return found_devices
+    async def discover_kasa_devices(self):
+        devices = await Discover.discover()
+        device_dict = {}
+
+        for addr, dev in devices.items():
+            await dev.update()  # Update device state
+
+            # Format the device information
+            device_info = f"<DeviceType.{dev.device_type.name} model {dev.model} at {addr} ({dev.alias}), is_on: {dev.is_on}"
+
+            # Add to dictionary
+            device_dict[addr] = device_info
+
+        return device_dict
 
 
 # Anything below this line is optional, but may come in handy for debugging and testing.
-# To use, call `python wifi_sensor.py` in the command line while in the `src` directory.
 async def main():
-    plug = MySensor(name="plug")
-    readings = await plug.get_readings()
-    print(readings)
+    found_devices = await Discover.discover()
+    print(found_devices)
+    print(type(found_devices))
 
 if __name__ == '__main__':
     asyncio.run(main())
