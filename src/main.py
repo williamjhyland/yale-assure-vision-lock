@@ -5,7 +5,7 @@ from viam.module.module import Module
 from viam.components.sensor import Sensor
 from viam.resource.registry import Registry, ResourceCreatorRegistration
 
-from memory_sensor import MySensor 
+from kasa_smart_plug import MySensor 
 
 
 async def main():
