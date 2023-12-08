@@ -17,7 +17,7 @@ from viam.logging import getLogger
 logger = getLogger(__name__)
 
 class MySensor(Sensor):
-    MODEL: ClassVar[Model] = Model(ModelFamily("bill", "kasaplug"), "visionswitch")
+    MODEL: ClassVar[Model] = Model(ModelFamily("bill", "kasaplug"), "visionswitchv2")
     
     def __init__(self, name: str):
         super().__init__(name)
