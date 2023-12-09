@@ -9,6 +9,12 @@ VENV_NAME="venv"
 PYTHON="$VENV_NAME/bin/python"
 ENV_ERROR="This module requires Python >=3.8, pip, and virtualenv to be installed."
 
+# install pip
+sudo apt install python3-pip
+
+# install virtualenv
+sudo pip3 install virtualenv 
+
 if ! python3 -m venv --system-site-packages $VENV_NAME >/dev/null 2>&1; then
     echo "Failed to create virtualenv."
     if command -v apt-get >/dev/null; then
