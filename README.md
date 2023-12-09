@@ -10,7 +10,7 @@ Example Config:
     "Dog": 0.3
   },
   "vision_service": "effdet-vision",
-  "plug_ip": "192.168.10.10",
+  "plug_ip": "192.168.10.10"
 }
 
 Run "Kasa Discover" from python to find your Kasa Device
