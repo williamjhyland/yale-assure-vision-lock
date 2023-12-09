@@ -13,6 +13,15 @@ Example Config:
   "plug_ip": "192.168.10.10"
 }
 
+# !!!Required Dependencies!!!
+  "depends_on": [
+    "webcam",
+    "detection-camera",
+    "effdet-vision"
+    ]
+
+  The Module will not start up without the dependencies set.
+
 Run "Kasa Discover" from python to find your Kasa Device
 
 More info here: https://python-kasa.readthedocs.io/en/latest/cli.html#discovery
