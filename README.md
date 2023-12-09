@@ -13,6 +13,10 @@ Example Config:
   "plug_ip": "192.168.10.10",
 }
 
+Run "Kasa Discover" from python to find your Kasa Device
+
+More info here: https://python-kasa.readthedocs.io/en/latest/cli.html#discovery
+
 Supported Plugs:
 HS100
 HS103
