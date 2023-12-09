@@ -31,8 +31,6 @@ from viam.errors import NoCaptureToStoreError
 from viam.services.vision import Vision
 from viam.utils import from_dm_from_extra
 
-
-import kasa
 from viam.logging import getLogger
 
 logger = getLogger(__name__)
