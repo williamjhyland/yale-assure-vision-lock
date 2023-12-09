@@ -39,7 +39,7 @@ logger = getLogger(__name__)
 
 class MySensor(Sensor):
     # Subclass the Viam Sensor component and implement the required functions
-    MODEL: ClassVar[Model] = Model(ModelFamily("bill","kasaplug"), "visionswitch")
+    MODEL: ClassVar[Model] = Model(ModelFamily("bill","kasaplug"), "visionswitchv1")
     source_camera = None
     tags = None
     vision_service = None
