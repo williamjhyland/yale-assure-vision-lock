@@ -13,7 +13,7 @@ Example Config:
   "plug_ip": "192.168.10.10"
 }
 
-# !!!Required Dependencies!!!
+# Required Dependencies
   "depends_on": [
     "webcam",
     "detection-camera",

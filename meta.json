@@ -1,0 +1,13 @@
+{
+  "module_id": "bill:kasa-smartplug-visionswitch",
+  "visibility": "public",
+  "url": "https://github.com/williamjhyland/kasa-image-activation",
+  "description": "Provide a vision service, a relevant tag, a camera, and an IP Address of the Kasa smart plug the light will turn on or off depending on if the detection is seen or not.",
+  "models": [
+    {
+      "api": "rdk:component:sensor",
+      "model": "bill:kasasmartplug:visionswitch"
+    }
+  ],
+  "entrypoint": "exec.sh"
+}
