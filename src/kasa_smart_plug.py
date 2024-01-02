@@ -105,7 +105,7 @@ class MySensor(Sensor):
     
     async def check_kasa_plug(self):
         found = False
-        detections = await self.vision_service.get_detections_from_camera(self.source_camera)
+        detections = await self.vision_service.get_detections_from_camera(self.source_camera.name)
         for d in detections:
             tag_value = self.tags.get(d.class_name)
             if tag_value is not None and d.confidence >= tag_value:
