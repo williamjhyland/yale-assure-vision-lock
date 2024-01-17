@@ -24,17 +24,4 @@ Example Config:
 
 Run "Kasa Discover" from python to find your Kasa Device
 
-More info here: https://python-kasa.readthedocs.io/en/latest/cli.html#discovery
-
-Supported Plugs:
-HS100
-HS103
-HS105
-HS107
-HS110
-KP100
-KP105
-KP115
-KP125
-KP401
-EP10
+More info here: https://github.com/bdraco/yalexs
