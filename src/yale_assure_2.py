@@ -4,6 +4,7 @@ import json
 import time
 import threading
 import requests
+from google.protobuf import json_format
 
 from august.api import Api 
 from august.authenticator import Authenticator, AuthenticationState, ValidationResult
@@ -27,6 +28,8 @@ from viam.components.camera import Camera
 from viam.resource.types import Model, ModelFamily
 from viam.resource.base import ResourceBase
 from viam.media.video import NamedImage
+from viam.errors import NoCaptureToStoreError
+
 from PIL import Image
 
 from viam.services.vision import Vision
@@ -36,7 +39,7 @@ from viam.logging import getLogger
 logger = getLogger(__name__)
 
 class LockController(threading.Thread):
-    def __init__(self, api, access_token, lock):
+    def __init__(self, api=None, access_token=None, lock=None):
         threading.Thread.__init__(self)
         self.api = api
         self.access_token = access_token
@@ -44,22 +47,43 @@ class LockController(threading.Thread):
         self.lock_status = LockStatus.UNKNOWN
         self.daemon = True  # Set as a daemon so it will be killed once the main program exits
         self.lock_action = None
+        self.locks = []
+        self.running = True
+        self.error_messages = ""
+        self.last_check = ""
+        self.backoff_time = 15
 
     def run(self):
-        while True:
-            # Check and update the lock status
-            self.lock_status = self.api.get_lock_status(self.access_token, self.lock.device_id)
+        max_backofftime = 300
+        while self.running:
+            try:
+                while self.get_lock_status() == LockStatus.UNKNOWN:
+                    logger.warn("--- Getting Lock Status ---")
+                    self._update_lock_status()
+                    if self.get_lock_status() == LockStatus.UNKNOWN:
+                        logger.warn("--- Lock Status UNKNOWN Try Again in %s seconds! ---", self.backoff_time)
+                        time.sleep(self.backoff_time)
+                    if self.backoff_time <= max_backofftime:
+                        self.backoff_time = min(self.backoff_time * 2, max_backofftime)
 
-            # Perform any pending lock action
-            if self.lock_action == "lock" and self.lock_status == LockStatus.UNLOCKED:
-                self.api.lock(self.access_token, self.lock.device_id)
-                time.sleep(3)
-            elif self.lock_action == "unlock" and self.lock_status == LockStatus.LOCKED:
-                self.api.unlock(self.access_token, self.lock.device_id)
-                time.sleep(3)
-            
-            self.lock_action = None
-            time.sleep(1)  # Pause for 5 seconds between checks
+                self.backoff_time = 15
+                self._update_lock_status()
+                # Perform any pending lock action
+                if self.lock_action == "lock" and self.get_lock_status() == LockStatus.UNLOCKED:
+                    logger.warn("--------- TRY LOCKING @ %s ---------", str(time.strftime("%B %d, %Y %H:%M:%S",self.last_check)))
+                    self.api.lock(self.access_token, self.lock.device_id)
+                elif self.lock_action == "unlock" and self.get_lock_status() == LockStatus.LOCKED:
+                    logger.warn("--------- TRY UNLOCKING @ %s ---------", str(time.strftime("%B %d, %Y %H:%M:%S",self.last_check)))
+                    self.api.unlock(self.access_token, self.lock.device_id)
+                else:
+                    logger.warn("--------- LOCK IS PROPERLY SET @ %s ---------", str(time.strftime("%B %d, %Y %H:%M:%S",self.last_check)))
+                    
+                    time.sleep(1)
+            except Exception as e:
+                logger.error("Error in thread: %s", str(e))
+                self.error_messages = str(e)
+                self._update_lock_status()
+                time.sleep(30)  # Pause for 5 seconds between checks
 
     def set_lock_action(self, action):
         self.lock_action = action
@@ -67,8 +91,28 @@ class LockController(threading.Thread):
     def get_lock_status(self):
         return self.lock_status
 
+    def _update_lock_status(self):
+        # This method updates the lock status and logs the time
+        self.lock_status = self.api.get_lock_status(self.access_token, self.lock.device_id)
+        self.last_check = time.localtime()
+
     def get_last_action(self):
         return self.lock_action
+
+    def get_last_error(self):
+        return self.error_messages
+
+    def get_last_check_time(self):
+        return self.last_check
+
+    def get_last_backoff_time(self):
+        return str(self.backoff_time)
+    
+    def get_locks(self):
+        return self.locks
+
+    def stop(self):
+        self.running = False
 
 class MySensor(Sensor):
     # Subclass the Viam Sensor component and implement the required functions
@@ -149,37 +193,65 @@ class MySensor(Sensor):
             self.default_state = "locked"
 
         api = Api(timeout=20)
-        access_token_cache_file_path = '/Users/williamhyland/Documents/Projects/py-august/accesstoken/august_access_token.json'
+        access_token_cache_file_path = '/home/viam/yale-assure-vision-lock/src/accesstoken/august_access_token.json'
         authenticator = Authenticator(api, "email", "bill.hyland@viam.com", "Password123!", access_token_cache_file=access_token_cache_file_path)
         authentication = authenticator.authenticate()
 
         if authentication.state == AuthenticationState.AUTHENTICATED:
+            logger.warn("**** Authentication State Authenticated ****")
             with open(access_token_cache_file_path, 'r') as file:
                 data = json.load(file)
                 access_token = data["access_token"]
 
             locks = api.get_locks(authentication.access_token)
-
             if not locks:
                 print("No locks found.")
             else:
                 # Finding the lock by name
                 selected_lock = None
                 for lock in locks:
-                    if lock.name == self.lock_name:
+                    if lock.device_name == self.lock_name:
                         selected_lock = lock
                         break
 
                 self.lock_controller = LockController(api, access_token, selected_lock)
                 self.lock_controller.start()
 
+                for lock in locks:
+                    self.lock_controller.locks.append(lock.device_name)
+        else:
+            logger.warn("**** Authentication State NOT Authenticated ****")
+            self.lock_controller = LockController()
+
+
     async def get_readings(self, extra: Optional[Dict[str, Any]] = None, **kwargs) -> Mapping[str, Any]:
-        await self.check_yale_lock()
+        if self.lock_controller is None or not self.lock_controller.is_alive():
+            # Lock Controller is not started or not running
+            return {"status": "Lock Controller not started", "locks": []}
+        
+        if self.lock_controller.locks is None:
+            # No locks are detected
+            return {"status": "No locks detected", "locks": []}
+
         if 'fromDataManagement' in extra and extra['fromDataManagement'] is True:
+            await self.check_yale_lock()
             raise NoCaptureToStoreError()
         else:
-            sensor_reading = await self.discover_yale_devices()
-        return sensor_reading
+            if self.lock_controller.get_lock_status() == None:
+                logger.warn("--- Lock Status Unknown... Setting to None ---")
+                lock_state = "None"
+            else:
+                lock_state = self.lock_controller.get_lock_status().name
+            sensor_reading = {
+                "Locks Available": self.lock_controller.locks, 
+                "Thread Alive": self.lock_controller.is_alive(), 
+                "Lock Action": self.lock_controller.get_last_action(), 
+                "Lock Status": lock_state,
+                "Last Error Message": self.lock_controller.get_last_error(),
+                "Last Check Timestamp": str(time.strftime("%B %d, %Y %H:%M:%S", self.lock_controller.get_last_check_time())),
+                "Last Back Off Time": self.lock_controller.get_last_backoff_time()
+                }
+            return sensor_reading
     
     async def check_yale_lock(self):
         found = False
@@ -187,7 +259,6 @@ class MySensor(Sensor):
         for d in detections:
             tag_value = self.tags.get(d.class_name)
             if tag_value is not None and d.confidence >= tag_value:
-                print("I see a " + str(d.class_name))
                 found = True
                 break
 
@@ -197,37 +268,25 @@ class MySensor(Sensor):
             else:
                 self.lock_controller.lock_action = "lock"
         else:
-            if self.default_state == "unlocked":
+            if self.default_state == "locked":
                 self.lock_controller.lock_action = "lock"
             else:
                 self.lock_controller.lock_action = "unlock"
         pass
 
-    async def discover_yale_devices(self):
-        devices = api.get_locks()
-        device_dict = {}
-
-        for addr, dev in devices.items():
-            await dev.update()  # Update device state
-
-            # Format the device information
-            device_info = f"<DeviceType.{dev.device_type.name} model {dev.model} at {addr} ({dev.alias}), is_on: {dev.is_on}"
-
-            # Add to dictionary
-            device_dict[addr] = device_info
-
-        return device_dict
-
-
 # Anything below this line is optional, but may come in handy for debugging and testing.
 async def main():
+    return None 
+
     api = Api(timeout=20)
-    access_token_cache_file_path = '/Users/williamhyland/Documents/Projects/py-august/accesstoken/august_access_token.json'
+    access_token_cache_file_path = '/home/viam/yale-assure-vision-lock/src/accesstoken/august_access_token.json'
     authenticator = Authenticator(api, "email", "bill.hyland@viam.com", "Password123!", access_token_cache_file=access_token_cache_file_path)
     # authenticator = Authenticator(api, "phone", "+14406104434", "Password123!", access_token_cache_file=access_token_cache_file)
 
     # Attempt to authenticate from cache
     authentication = authenticator.authenticate()
+
+    print(authentication.state)
 
     if authentication.state == AuthenticationState.AUTHENTICATED:
         with open(access_token_cache_file_path, 'r') as file:
@@ -247,8 +306,6 @@ async def main():
         lock_controller = LockController(api, access_token, lock)
         lock_controller.start()
 
-        lock_status = lock_controller.get_lock_status()
-
         while True:
             while lock_controller.get_lock_status() == LockStatus.UNKNOWN:
                 print(lock_controller.get_lock_status())
@@ -259,6 +316,18 @@ async def main():
             elif lock_controller.get_lock_status() == LockStatus.UNLOCKED:
                 lock_controller.set_lock_action("lock")
             time.sleep(3)  # Check every 3 seconds
+    elif authentication.state == AuthenticationState.REQUIRES_VALIDATION:
+        print("Validation required. Sending verification code...")
+        authenticator.send_verification_code()
+        verification_code = input("Enter verification code: ")  # Prompt user for verification code
+        validation_result = authenticator.validate_verification_code(verification_code)
+
+        if validation_result == ValidationResult.VALIDATED:
+            print("Validation successful. Re-authenticating...")
+            authentication = authenticator.authenticate()  # Re-authenticate after validation
+        else:
+            print("Invalid verification code. Please try again.")
+            # Handle invalid verification code scenario
 
 if __name__ == '__main__':
     asyncio.run(main())
