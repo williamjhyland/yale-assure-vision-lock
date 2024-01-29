@@ -144,6 +144,13 @@ class MySensor(Sensor):
         if lock_name == "":
             raise Exception("lock_name attribute is required for a Yale Smart Lock Vision component")
         
+        access_token_path = config.attributes.fields["access_token_path"].string_value
+        if access_token_path == "":
+            raise Exception("access_token_path attribute is required for a Yale Smart Lock Vision component")
+        
+        '''
+        Future when I add authenticaton
+        
         authentication_method = config.attributes.fields["authentication_method"].string_value
         if authentication_method.lower() != "email" or authentication_method.lower() != "phone":
             raise Exception("authentication_method attribute is required for a Yale Smart Lock Vision component")
@@ -159,15 +166,13 @@ class MySensor(Sensor):
         access_token_path = config.attributes.fields["access_token_path"].string_value
         if access_token_path == "":
             raise Exception("access_token_path attribute is required for a Yale Smart Lock Vision component")
-
+        '''
         return []
         
     def reconfigure(self, config: ComponentConfig, dependencies: Mapping[ResourceName, ResourceBase]):
         """Handles attribute reconfiguration"""
         # Retrieve authentication configuration and set as attributes
-        self.authentication_method = config.attributes.fields["authentication_method"].string_value
-        self.auth_username = config.attributes.fields["auth_username"].string_value
-        self.auth_password = config.attributes.fields["auth_password"].string_value
+        self.authentication_method = "email"
         self.access_token_path = config.attributes.fields["access_token_path"].string_value
 
         actual_cam_name = config.attributes.fields["source_camera"].string_value
@@ -193,8 +198,14 @@ class MySensor(Sensor):
             self.default_state = "locked"
 
         api = Api(timeout=20)
-        access_token_cache_file_path = '/home/viam/yale-assure-vision-lock/src/accesstoken/august_access_token.json'
-        authenticator = Authenticator(api, "email", "bill.hyland@viam.com", "Password123!", access_token_cache_file=access_token_cache_file_path)
+        # access_token_cache_file_path = '/home/viam/yale-assure-vision-lock/src/accesstoken/august_access_token.json'
+        access_token_cache_file_path = self.access_token_path
+        authenticator = Authenticator(
+            api, 
+            self.authentication_method, 
+            self.auth_username, 
+            self.auth_password, 
+            access_token_cache_file=access_token_cache_file_path)        
         authentication = authenticator.authenticate()
 
         if authentication.state == AuthenticationState.AUTHENTICATED:
@@ -277,57 +288,6 @@ class MySensor(Sensor):
 # Anything below this line is optional, but may come in handy for debugging and testing.
 async def main():
     return None 
-
-    api = Api(timeout=20)
-    access_token_cache_file_path = '/home/viam/yale-assure-vision-lock/src/accesstoken/august_access_token.json'
-    authenticator = Authenticator(api, "email", "bill.hyland@viam.com", "Password123!", access_token_cache_file=access_token_cache_file_path)
-    # authenticator = Authenticator(api, "phone", "+14406104434", "Password123!", access_token_cache_file=access_token_cache_file)
-
-    # Attempt to authenticate from cache
-    authentication = authenticator.authenticate()
-
-    print(authentication.state)
-
-    if authentication.state == AuthenticationState.AUTHENTICATED:
-        with open(access_token_cache_file_path, 'r') as file:
-            data = json.load(file)
-            access_token = data["access_token"]
-
-        locks = api.get_locks(authentication.access_token)
-        if not locks:
-            print("No locks found.")
-            exit()
-
-        print(locks)
-
-        
-
-        lock = locks[0]
-        lock_controller = LockController(api, access_token, lock)
-        lock_controller.start()
-
-        while True:
-            while lock_controller.get_lock_status() == LockStatus.UNKNOWN:
-                print(lock_controller.get_lock_status())
-                time.sleep(3)
-            print(lock_controller.get_lock_status(), lock_controller.get_last_action(), lock_controller.get_lock_status() == LockStatus.LOCKED, lock_controller.get_lock_status() == LockStatus.UNLOCKED)
-            if lock_controller.get_lock_status() == LockStatus.LOCKED:
-                lock_controller.set_lock_action("unlock")
-            elif lock_controller.get_lock_status() == LockStatus.UNLOCKED:
-                lock_controller.set_lock_action("lock")
-            time.sleep(3)  # Check every 3 seconds
-    elif authentication.state == AuthenticationState.REQUIRES_VALIDATION:
-        print("Validation required. Sending verification code...")
-        authenticator.send_verification_code()
-        verification_code = input("Enter verification code: ")  # Prompt user for verification code
-        validation_result = authenticator.validate_verification_code(verification_code)
-
-        if validation_result == ValidationResult.VALIDATED:
-            print("Validation successful. Re-authenticating...")
-            authentication = authenticator.authenticate()  # Re-authenticate after validation
-        else:
-            print("Invalid verification code. Please try again.")
-            # Handle invalid verification code scenario
 
 if __name__ == '__main__':
     asyncio.run(main())
