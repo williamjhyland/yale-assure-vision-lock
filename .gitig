@@ -1,9 +1,0 @@
-accestoken.json
-venv/
-/bin
-/include
-/lib
-/lib64
-/share
-/pyvenv.cfg
-src/accesstoken
