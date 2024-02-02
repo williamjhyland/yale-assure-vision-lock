@@ -1,40 +1,28 @@
 # Yale Smart Lock Vision/src/Yale Smart Lock Vision.py
 import asyncio
 import json
-import time
 import threading
-import requests
+import time
+
+from typing import ClassVar, Mapping, Sequence, Optional, Any, Dict, cast
+from typing_extensions import Self
 from google.protobuf import json_format
+from PIL import Image
 
 from august.api import Api 
 from august.authenticator import Authenticator, AuthenticationState, ValidationResult
 from august.lock import LockStatus
 
-from typing import ClassVar, Mapping, Sequence, Optional, cast, Tuple, List, Any, Dict
-from typing_extensions import Self
-
+from viam.components.camera import Camera
 from viam.components.sensor import Sensor
-from viam.operations import run_with_operation
+from viam.errors import NoCaptureToStoreError
+from viam.logging import getLogger
 from viam.proto.app.robot import ComponentConfig
 from viam.proto.common import ResourceName
 from viam.resource.base import ResourceBase
 from viam.resource.types import Model, ModelFamily
-from viam.services.vision import VisionClient
-
-from viam.module.types import Reconfigurable
-from viam.proto.app.robot import ComponentConfig
-from viam.proto.common import ResourceName, ResponseMetadata, Geometry
-from viam.components.camera import Camera
-from viam.resource.types import Model, ModelFamily
-from viam.resource.base import ResourceBase
-from viam.media.video import NamedImage
-from viam.errors import NoCaptureToStoreError
-
-from PIL import Image
-
 from viam.services.vision import Vision
-
-from viam.logging import getLogger
+from viam.utils import struct_to_dict
 
 logger = getLogger(__name__)
 
@@ -92,9 +80,11 @@ class LockController(threading.Thread):
         return self.lock_status
 
     def _update_lock_status(self):
-        # This method updates the lock status and logs the time
-        self.lock_status = self.api.get_lock_status(self.access_token, self.lock.device_id)
-        self.last_check = time.localtime()
+        if self.lock is not None:
+            self.lock_status = self.api.get_lock_status(self.access_token, self.lock.device_id)
+            self.last_check = time.localtime()
+        else:
+            logger.error("Lock object is None. Cannot update lock status.")
 
     def get_last_action(self):
         return self.lock_action
@@ -126,79 +116,47 @@ class MySensor(Sensor):
 
     @classmethod
     def validate_config(cls, config: ComponentConfig) -> Sequence[str]:
+        attributes_dict = struct_to_dict(config.attributes)
         """Validates JSON configuration"""
         
-        source_camera = config.attributes.fields["actual_cam"].string_value
-        if source_camera == "":
-            raise Exception("actual_cam attribute is required for a Yale Smart Lock Vision component")
-        
-        vision_service = config.attributes.fields["vision_service"].string_value
-        if vision_service == "":
-            raise Exception("vision_service attribute is required for a Yale Smart Lock Vision component")
-    
-        tags = config.attributes.fields["tags"]
-        if tags == "":
-            raise Exception("tags attribute is required for a Yale Smart Lock Vision component")
-        
-        lock_name = config.attributes.fields["lock_name"].string_value
-        if lock_name == "":
-            raise Exception("lock_name attribute is required for a Yale Smart Lock Vision component")
-        
-        access_token_path = config.attributes.fields["access_token_path"].string_value
-        if access_token_path == "":
-            raise Exception("access_token_path attribute is required for a Yale Smart Lock Vision component")
-        
-        '''
-        Future when I add authenticaton
-        
-        authentication_method = config.attributes.fields["authentication_method"].string_value
-        if authentication_method.lower() != "email" or authentication_method.lower() != "phone":
-            raise Exception("authentication_method attribute is required for a Yale Smart Lock Vision component")
+        required_attributes = ["actual_cam", "vision_service", "tags", "lock_name", "access_token_path"]
 
-        auth_username = config.attributes.fields["auth_username"].string_value
-        if auth_username == "":
-            raise Exception("auth_username attribute is required for a Yale Smart Lock Vision component")
-
-        auth_password = config.attributes.fields["auth_password"].string_value
-        if auth_password == "":
-            raise Exception("auth_password attribute is required for a Yale Smart Lock Vision component")
-
-        access_token_path = config.attributes.fields["access_token_path"].string_value
-        if access_token_path == "":
-            raise Exception("access_token_path attribute is required for a Yale Smart Lock Vision component")
-        '''
+        for attribute in required_attributes:
+            if attribute not in attributes_dict or not attributes_dict[attribute].string_value.strip():
+                raise Exception(f"{attribute} attribute is required for a Yale Smart Lock Vision component")
+                
         return []
         
     def reconfigure(self, config: ComponentConfig, dependencies: Mapping[ResourceName, ResourceBase]):
         """Handles attribute reconfiguration"""
+        attributes_dict = struct_to_dict(config.attributes)
         # Retrieve authentication configuration and set as attributes
         self.authentication_method = "email"
-        self.access_token_path = config.attributes.fields["access_token_path"].string_value
 
-        actual_cam_name = config.attributes.fields["source_camera"].string_value
-        actual_cam = dependencies[Camera.get_resource_name(actual_cam_name)]
-        self.source_camera = cast(Camera, actual_cam)
+        # Extract required attributes using attributes_dict
+        self.access_token_path = attributes_dict["access_token_path"]
 
-        vision_service_name = config.attributes.fields["vision_service"].string_value
-        vision_service = dependencies[Vision.get_resource_name(vision_service_name)]
-        self.vision_service = cast(Vision, vision_service)
+        actual_cam_name = attributes_dict["source_camera"]
+        self.source_camera = cast(Camera, dependencies[Camera.get_resource_name(actual_cam_name)])
 
-        self.lock_name = config.attributes.fields["lock_name"].string_value
+        vision_service_name = attributes_dict["vision_service"]
+        self.vision_service = cast(Vision, dependencies[Vision.get_resource_name(vision_service_name)])
 
-        tags = config.attributes.fields["tags"]
-        tags = json.loads(json_format.MessageToJson(config.attributes.fields["tags"]))
+        self.lock_name = attributes_dict["lock_name"]
 
-        self.tags = tags
-
-
-        if config.attributes.fields["default_state"].string_value.lower() == "locked" or config.attributes.fields["default_state"].string_value.lower() == "unlocked":
-            default_state = config.attributes.fields["default_state"].string_value.lower()
-            self.default_state = default_state
+        if attributes_dict["default_state"].lower() == "locked" or attributes_dict["default_state"].lower() == "unlocked":
+            self.default_state = attributes_dict["default_state"].lower()
         else:
             self.default_state = "locked"
 
+        if "auth_username" not in attributes_dict or "auth_password" not in attributes_dict:
+            self.auth_username = "EMAIL@EMAIL.COM"
+            self.auth_password = "PASSWORD"
+        else:
+            self.auth_username = attributes_dict["auth_username"]
+            self.auth_password = attributes_dict["auth_password"]
+
         api = Api(timeout=20)
-        # access_token_cache_file_path = '/home/viam/yale-assure-vision-lock/src/accesstoken/august_access_token.json'
         access_token_cache_file_path = self.access_token_path
         authenticator = Authenticator(
             api, 
@@ -220,13 +178,20 @@ class MySensor(Sensor):
             else:
                 # Finding the lock by name
                 selected_lock = None
+                logger.warn(f"**** Locks: {locks!r} ****")
                 for lock in locks:
                     if lock.device_name == self.lock_name:
                         selected_lock = lock
                         break
 
-                self.lock_controller = LockController(api, access_token, selected_lock)
-                self.lock_controller.start()
+                logger.warn("**** Creating Lock Controller ****")
+                logger.warn(f"**** Selected Lock: {selected_lock!r} ****")
+                if selected_lock is not None:
+                    self.lock_controller = LockController(api, access_token, selected_lock)
+                    self.lock_controller.start()
+                else:
+                    logger.warn(f"**** Selected lock can't be None... ****")
+                    self.lock_controller = LockController()
 
                 for lock in locks:
                     self.lock_controller.locks.append(lock.device_name)
